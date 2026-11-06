@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 只暴露分享用的缓存副本目录，不暴露 files/originals 等私有原图 -->
+    <cache-path
+        name="share_cache"
+        path="shared/" />
+</paths>

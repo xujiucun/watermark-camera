@@ -1,0 +1,24 @@
+*.iml
+.gradle/
+.kotlin/
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+app/build/
+
+# 签名文件
+*.keystore
+*.jks
+
+# 本地验证截图 / 临时产物
+/*.png
+/*.jpg
+/*.jpeg
+/ui*.xml
+/.screenshots/
+/docs/screenshots/

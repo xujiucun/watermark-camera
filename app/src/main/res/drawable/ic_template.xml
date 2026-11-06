@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 占位图标：保存为模板 / 模板样式。替换说明见 docs/图标资源说明.md -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M3,5h8v3H5v8H3V5zM13,5h8v16H13v-3h5V8h-5V5zM3,18h8v3H3z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M8,9h8v6H8z" />
+</vector>

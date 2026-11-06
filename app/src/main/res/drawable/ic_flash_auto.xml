@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 占位图标：拍摄页闪光灯（自动）。替换说明见 docs/图标资源说明.md -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M7,2v11h3v9l7,-12h-4l4,-8z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M20,3h-2l-2.8,8h1.8l0.5,-1.6h2.4l0.5,1.6h1.8zM18.7,8l0.7,-2.2h0.2l0.7,2.2z" />
+</vector>
