@@ -95,6 +95,32 @@ class LocationProvider(
         }
     }
 
+    /**
+     * 按指定坐标解析地址与天气，用于「手机里已有照片」的 EXIF GPS：
+     * 逆地理成功给出省市区与地点；失败时只带经纬度（水印仍能显示坐标行）；
+     * 天气拿不到就为 null，整段不显示。不读写「当前定位」的地址缓存。
+     */
+    suspend fun snapshotAt(latitude: Double, longitude: Double): LocationSnapshot =
+        withContext(Dispatchers.IO) {
+            val coordinates = formatCoordinates(latitude, longitude)
+            val location = Location("exif").apply {
+                this.latitude = latitude
+                this.longitude = longitude
+            }
+            val address = resolveAddress(location)
+            val weather = address?.adcode?.let { adcode -> resolveWeather(adcode) }
+            if (address == null) {
+                LocationSnapshot(coordinates = coordinates, weatherText = weather)
+            } else {
+                LocationSnapshot(
+                    district = address.district,
+                    detail = address.detail,
+                    coordinates = coordinates,
+                    weatherText = weather
+                )
+            }
+        }
+
     private suspend fun resolveAddress(location: Location): AddressEntry? {
         if (amapClient.isConfigured) {
             val amap = amapClient.reverseGeocode(location.latitude, location.longitude)

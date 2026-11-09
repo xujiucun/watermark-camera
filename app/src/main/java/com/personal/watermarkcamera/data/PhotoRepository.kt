@@ -3,6 +3,7 @@ package com.personal.watermarkcamera.data
 import android.content.IntentSender
 import android.net.Uri
 import android.util.Log
+import com.personal.watermarkcamera.domain.WatermarkSettings
 import com.personal.watermarkcamera.domain.WatermarkSpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -54,7 +55,8 @@ data class DeleteOutcome(
 class PhotoRepository(
     private val mediaStore: MediaStorePhotoRepository,
     private val originalStore: PhotoOriginalStore,
-    private val composer: PhotoComposer
+    private val composer: PhotoComposer,
+    private val external: ExternalPhotoSource
 ) {
 
     /**
@@ -110,6 +112,72 @@ class PhotoRepository(
 
         logInconsistencies(items)
         items
+    }
+
+    /**
+     * 按输入来源载入编辑素材：自家成片沿用私有原图 + 快照；
+     * 外部照片由 [ExternalPhotoSource] 复制副本、读 EXIF 时间与 GPS 后构建初始规格。
+     */
+    suspend fun openEdit(target: EditTarget, settings: WatermarkSettings): EditLoad =
+        when (target) {
+            is EditTarget.Owned -> {
+                val source = loadEditSource(target.item)
+                if (source == null) {
+                    EditLoad.Failed("这张没有原始照片，无法重新编辑")
+                } else {
+                    EditLoad.Ready(
+                        EditSession(
+                            target = target,
+                            timestampMillis = source.timestampMillis,
+                            imageFile = source.original,
+                            spec = source.spec
+                        )
+                    )
+                }
+            }
+
+            is EditTarget.Picked -> external.open(target.uri, settings)
+        }
+
+    /** 按来源保存：自家成片覆盖原记录，外部照片另存为新成片（原图不动）。 */
+    suspend fun saveEdit(session: EditSession, spec: WatermarkSpec): Boolean =
+        when (val target = session.target) {
+            is EditTarget.Owned -> replaceWatermark(target.item, spec)
+            is EditTarget.Picked -> saveAsNew(session, spec)
+        }
+
+    /**
+     * 外部照片另存为新成片：按 [PhotoComposer.composeExternal] 的降采样策略合成，
+     * 走与拍照相同的 MediaStore 写入（IS_PENDING）与命名规则，不触碰原图。
+     */
+    private suspend fun saveAsNew(session: EditSession, spec: WatermarkSpec): Boolean =
+        withContext(Dispatchers.IO) {
+            val composed = try {
+                composer.composeExternal(session.imageFile, spec)
+            } catch (t: Throwable) {
+                Log.w(TAG, "外部照片合成失败：${session.imageFile.name}", t)
+                return@withContext false
+            }
+            try {
+                // 同一秒内选中多张老照片时错开时间戳，避免成片重名、私有原图互相覆盖
+                var timestamp = session.timestampMillis
+                while (originalStore.findOriginalNear(timestamp) != null) timestamp += 1_000L
+                save(composed.watermarked, composed.original, timestamp, spec)
+                true
+            } catch (t: Throwable) {
+                Log.w(TAG, "外部照片保存失败：${session.imageFile.name}", t)
+                false
+            } finally {
+                composed.watermarked.delete()
+                composed.original.delete()
+            }
+        }
+
+    /** 编辑页退出时清理外部照片的缓存副本；自家成片的私有原图必须保留。 */
+    fun releaseSession(session: EditSession) {
+        if (session.target is EditTarget.Picked) {
+            runCatching { session.imageFile.delete() }
+        }
     }
 
     /** 取重新编辑所需素材；没有私有原图时返回 null，UI 据此提示而不是静默失败。 */

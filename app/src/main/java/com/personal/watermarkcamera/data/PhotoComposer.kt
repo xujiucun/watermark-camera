@@ -31,13 +31,28 @@ class PhotoComposer(
     private val renderer: WatermarkRenderer
 ) {
 
-    fun compose(source: File, spec: WatermarkSpec, mirrorHorizontally: Boolean): ComposeResult {
+    fun compose(source: File, spec: WatermarkSpec, mirrorHorizontally: Boolean): ComposeResult =
+        composeInternal(source, spec, mirrorHorizontally, maxDimension = 0)
+
+    /**
+     * 手机里已有照片的合成：这类图片尺寸不可控（可能有 1 亿像素），
+     * 按 [maxDimension] 做 2 的幂次降采样，避免整图解码触发 OOM。
+     * 降采样对水印观感没有影响（水印按输出尺寸等比绘制）。
+     */
+    fun composeExternal(
+        source: File,
+        spec: WatermarkSpec,
+        maxDimension: Int = EXTERNAL_MAX_DIMENSION
+    ): ComposeResult = composeInternal(source, spec, mirrorHorizontally = false, maxDimension)
+
+    private fun composeInternal(
+        source: File,
+        spec: WatermarkSpec,
+        mirrorHorizontally: Boolean,
+        maxDimension: Int
+    ): ComposeResult {
         val orientation = readOrientation(source)
-        val options = BitmapFactory.Options().apply {
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-            inMutable = true
-        }
-        val decoded = BitmapFactory.decodeFile(source.absolutePath, options)
+        val decoded = decode(source, maxDimension)
             ?: throw IOException("无法解码照片")
 
         var upright = rotate(decoded, orientation)
@@ -96,6 +111,24 @@ class PhotoComposer(
         return output
     }
 
+    /** [maxDimension] 为 0 表示按原尺寸解码；否则按 2 的幂次降采样到不超过该边长。 */
+    private fun decode(source: File, maxDimension: Int): Bitmap? {
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            inMutable = true
+        }
+        if (maxDimension > 0) {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(source.absolutePath, bounds)
+            var sample = 1
+            while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxDimension) {
+                sample *= 2
+            }
+            options.inSampleSize = sample
+        }
+        return BitmapFactory.decodeFile(source.absolutePath, options)
+    }
+
     private fun readOrientation(source: File): Int = runCatching {
         ExifInterface(source.absolutePath)
             .getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
@@ -136,6 +169,9 @@ class PhotoComposer(
     }
 
     private companion object {
+        /** 外部照片解码上限：12MP 级别的照片通常不会被降采样，超大图最多到约 4000px。 */
+        const val EXTERNAL_MAX_DIMENSION = 4096
+
         val EXIF_TAGS = listOf(
             ExifInterface.TAG_MAKE,
             ExifInterface.TAG_MODEL,

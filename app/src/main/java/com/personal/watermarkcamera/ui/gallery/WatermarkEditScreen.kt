@@ -2,6 +2,7 @@ package com.personal.watermarkcamera.ui.gallery
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -28,14 +29,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,7 +45,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
@@ -54,11 +53,12 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.exifinterface.media.ExifInterface
 import com.personal.watermarkcamera.R
-import com.personal.watermarkcamera.data.EditSource
-import com.personal.watermarkcamera.data.PhotoItem
+import com.personal.watermarkcamera.data.EditLoad
+import com.personal.watermarkcamera.data.EditSession
+import com.personal.watermarkcamera.data.EditTarget
 import com.personal.watermarkcamera.data.PhotoRepository
 import com.personal.watermarkcamera.domain.WatermarkPreset
 import com.personal.watermarkcamera.domain.WatermarkRenderer
@@ -76,18 +76,20 @@ import kotlin.math.max
 private val Accent = Color(0xFFFF6B35)
 
 /**
- * 图片页「重新编辑水印」独立页面。
+ * 图片页的水印编辑独立页面，支持两种输入来源（见 [EditTarget]）：
  *
- * - 初始参数来自该照片保存的 [WatermarkSpec] 快照（时间/地点等文本不再重新取，保持原样）；
- * - 预览用私有原图 + 当前参数实时重绘，与成片走同一个 [WatermarkRenderer]；
- * - 只有点「保存」并确认后才写文件：用原图重新合成并覆盖相册里的同一条成片，原图不动；
- * - 未保存退出不会改动任何文件。
+ * - 自家成片：初始参数来自该照片保存的 [WatermarkSpec] 快照，保存时覆盖相册里的同一条成片；
+ * - 手机里已有的照片：素材是缓存副本，初始参数用当前水印设置 + 照片 EXIF 拍摄时间 / GPS 生成，
+ *   保存时另存为新成片，原图绝不修改。
+ *
+ * 预览用源图 + 当前参数实时重绘，与成片走同一个 [WatermarkRenderer]；未保存退出不改动任何文件。
  */
 @Composable
 fun WatermarkEditScreen(
     repository: PhotoRepository,
     renderer: WatermarkRenderer,
-    item: PhotoItem,
+    target: EditTarget,
+    currentSettings: WatermarkSettings,
     onBack: () -> Unit,
     onSaved: () -> Unit
 ) {
@@ -95,31 +97,52 @@ fun WatermarkEditScreen(
     val scope = rememberCoroutineScope()
     val scheme = MaterialTheme.colorScheme
 
-    var source by remember(item.uri) { mutableStateOf<EditSource?>(null) }
-    var loaded by remember(item.uri) { mutableStateOf(false) }
-    var settings by remember(item.uri) { mutableStateOf<WatermarkSettings?>(null) }
-    var initialSettings by remember(item.uri) { mutableStateOf<WatermarkSettings?>(null) }
-    var baseSpec by remember(item.uri) { mutableStateOf<WatermarkSpec?>(null) }
+    val targetKey = when (target) {
+        is EditTarget.Owned -> "owned:${target.item.uri}"
+        is EditTarget.Picked -> "picked:${target.uri}"
+    }
+    val picking = target is EditTarget.Picked
+
+    var session by remember(targetKey) { mutableStateOf<EditSession?>(null) }
+    var loadFailure by remember(targetKey) { mutableStateOf<String?>(null) }
+    var loaded by remember(targetKey) { mutableStateOf(false) }
+    var settings by remember(targetKey) { mutableStateOf<WatermarkSettings?>(null) }
+    var initialEditSettings by remember(targetKey) { mutableStateOf<WatermarkSettings?>(null) }
+    var baseSpec by remember(targetKey) { mutableStateOf<WatermarkSpec?>(null) }
     var sheetOpen by remember { mutableStateOf(false) }
     var confirmSave by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var dragging by remember { mutableStateOf(false) }
 
-    LaunchedEffect(item.uri) {
-        val loadedSource = repository.loadEditSource(item)
-        source = loadedSource
-        if (loadedSource != null) {
-            val base = loadedSource.spec ?: fallbackSpec(item.timestampMillis)
-            baseSpec = base
-            val initial = base.toEditSettings()
-            settings = initial
-            initialSettings = initial
+    LaunchedEffect(targetKey) {
+        when (val result = repository.openEdit(target, currentSettings)) {
+            is EditLoad.Ready -> {
+                val ready = result.session
+                session = ready
+                val base = ready.spec ?: fallbackSpec(ready.timestampMillis)
+                baseSpec = base
+                val initial = base.toEditSettings()
+                settings = initial
+                initialEditSettings = initial
+            }
+
+            is EditLoad.Failed -> loadFailure = result.message
         }
         loaded = true
     }
 
-    val dirty = settings != null && initialSettings != null && settings != initialSettings
+    // 退出编辑页时清理外部照片的缓存副本；自家成片的私有原图必须保留。
+    // 注意闭包要捕获当时的 session 值，不能读状态，否则 session 由 null 变为 Ready 时
+    // 旧 effect 的 onDispose 会把刚载入的副本删掉。
+    val loadedSession = session
+    DisposableEffect(loadedSession) {
+        onDispose { loadedSession?.let { repository.releaseSession(it) } }
+    }
+
+    val dirty = settings != null &&
+        initialEditSettings != null &&
+        settings != initialEditSettings
 
     BackHandler {
         when {
@@ -131,15 +154,19 @@ fun WatermarkEditScreen(
 
     val current = settings
     val currentBase = baseSpec
-    val editedSpec = if (current != null && currentBase != null) {
-        buildEditedSpec(current, currentBase, item.timestampMillis)
+    val timestamp = session?.timestampMillis
+    val editedSpec = if (current != null && currentBase != null && timestamp != null) {
+        buildEditedSpec(current, currentBase, timestamp)
     } else {
         null
     }
-    val image by produceState<Bitmap?>(initialValue = null, source?.original?.absolutePath) {
-        val file = source?.original ?: return@produceState
+    val image by produceState<Bitmap?>(
+        initialValue = null,
+        session?.imageFile?.absolutePath
+    ) {
+        val file = session?.imageFile ?: return@produceState
         value = withContext(Dispatchers.IO) {
-            runCatching { loadSampledFile(file, maxDimension = 1600) }.getOrNull()
+            runCatching { loadSampledUpright(file, maxDimension = 1600) }.getOrNull()
         }
     }
 
@@ -164,7 +191,7 @@ fun WatermarkEditScreen(
                 }
                 Spacer(Modifier.weight(1f))
                 Text(
-                    text = "编辑水印",
+                    text = if (picking) "给照片加水印" else "编辑水印",
                     color = scheme.onSurface,
                     style = MaterialTheme.typography.titleMedium
                 )
@@ -190,22 +217,27 @@ fun WatermarkEditScreen(
             ) {
                 when {
                     !loaded -> CircularProgressIndicator(color = Accent)
-                    source == null -> Column(
+                    session == null -> Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.padding(24.dp)
                     ) {
                         Text(
-                            text = "这张没有原始照片，无法重新编辑",
+                            text = loadFailure ?: "无法读取这张照片",
                             color = Color.White,
                             style = MaterialTheme.typography.titleSmall
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            text = "原始照片可能已被清理；相册成片仍然保留。",
+                            text = if (picking) {
+                                "请返回重新选择一张照片。"
+                            } else {
+                                "原始照片可能已被清理；相册成片仍然保留。"
+                            },
                             color = Color(0xFFBBBBBB),
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
+
                     else -> {
                         val bitmap = image
                         val spec = editedSpec
@@ -274,7 +306,11 @@ fun WatermarkEditScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "保存会覆盖相册成片，原图保持不变，可再次编辑。",
+                    text = if (picking) {
+                        "保存会另存一张新照片，原图保持不变。"
+                    } else {
+                        "保存会覆盖相册成片，原图保持不变，可再次编辑。"
+                    },
                     color = scheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.weight(1f)
@@ -345,7 +381,7 @@ fun WatermarkEditScreen(
                     CircularProgressIndicator(color = Accent)
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        text = "正在更新水印…",
+                        text = if (picking) "正在保存新照片…" else "正在更新水印…",
                         color = Color.White,
                         style = MaterialTheme.typography.titleSmall
                     )
@@ -357,31 +393,46 @@ fun WatermarkEditScreen(
     if (confirmSave) {
         AlertDialog(
             onDismissRequest = { confirmSave = false },
-            title = { Text("覆盖这张照片？") },
+            title = { Text(if (picking) "保存为一张新照片？" else "覆盖这张照片？") },
             text = {
-                Text("将用原始照片按新参数重新合成，覆盖相册里的成片；原图保持不变，之后还能再次编辑。")
+                Text(
+                    if (picking) {
+                        "将在 Pictures/WatermarkCamera 另存一张带水印的新照片，原图不会被修改。"
+                    } else {
+                        "将用原始照片按新参数重新合成，覆盖相册里的成片；原图保持不变，之后还能再次编辑。"
+                    }
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
                     confirmSave = false
+                    val ready = session ?: return@TextButton
                     val spec = editedSpec ?: return@TextButton
                     saving = true
                     sheetOpen = false
                     scope.launch {
-                        val ok = repository.replaceWatermark(item, spec)
+                        val ok = repository.saveEdit(ready, spec)
                         saving = false
                         if (ok) {
-                            Toast.makeText(context, "已更新水印", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(
+                                context,
+                                if (picking) "已保存新的水印照片" else "已更新水印",
+                                Toast.LENGTH_SHORT
+                            ).show()
                             onSaved()
                         } else {
                             Toast.makeText(
                                 context,
-                                "保存失败，原照片未改动",
+                                if (picking) {
+                                    "保存失败：照片可能过大或存储空间不足，原图未改动"
+                                } else {
+                                    "保存失败，原照片未改动"
+                                },
                                 Toast.LENGTH_SHORT
                             ).show()
                         }
                     }
-                }) { Text("覆盖保存", color = Accent) }
+                }) { Text(if (picking) "保存" else "覆盖保存", color = Accent) }
             },
             dismissButton = {
                 TextButton(onClick = { confirmSave = false }) { Text("取消") }
@@ -484,6 +535,30 @@ private fun fallbackSpec(timestampMillis: Long): WatermarkSpec =
         showCoordinates = false,
         showCustom = false
     ).toSpec(timestampMillis, null)
+
+/** 预览取图：按 EXIF orientation 旋正，外部照片（可能横着存）在预览里也是正的。 */
+private fun loadSampledUpright(file: java.io.File, maxDimension: Int): Bitmap? {
+    val bitmap = loadSampledFile(file, maxDimension) ?: return null
+    val orientation = runCatching {
+        ExifInterface(file.absolutePath).getAttributeInt(
+            ExifInterface.TAG_ORIENTATION,
+            ExifInterface.ORIENTATION_NORMAL
+        )
+    }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+    val degrees = when (orientation) {
+        ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+        ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+        ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+        else -> 0f
+    }
+    if (degrees == 0f) return bitmap
+    val rotated = runCatching {
+        val matrix = Matrix().apply { postRotate(degrees) }
+        Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    }.getOrNull() ?: return bitmap
+    if (rotated !== bitmap) bitmap.recycle()
+    return rotated
+}
 
 private fun loadSampledFile(file: java.io.File, maxDimension: Int): Bitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

@@ -3,6 +3,7 @@ package com.personal.watermarkcamera
 import android.content.Context
 import com.personal.watermarkcamera.data.AmapClient
 import com.personal.watermarkcamera.data.AppSettingsStore
+import com.personal.watermarkcamera.data.ExternalPhotoSource
 import com.personal.watermarkcamera.data.LocationProvider
 import com.personal.watermarkcamera.data.MediaStorePhotoRepository
 import com.personal.watermarkcamera.data.PhotoComposer
@@ -40,9 +41,13 @@ class AppContainer(context: Context) {
 
     val shareCache = PhotoShareCache(appContext)
 
+    /** 「手机里已有的照片」：系统选图返回的只读 URI 复制、EXIF 读取与地址解析。 */
+    private val externalPhotoSource = ExternalPhotoSource(appContext, locationProvider)
+
     val photoRepository = PhotoRepository(
         mediaStore = MediaStorePhotoRepository(appContext),
         originalStore = originalStore,
-        composer = photoComposer
+        composer = photoComposer,
+        external = externalPhotoSource
     )
 }

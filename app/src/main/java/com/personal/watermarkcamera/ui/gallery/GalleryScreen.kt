@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.provider.MediaStore
 import android.util.Size
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -75,6 +76,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.personal.watermarkcamera.AppContainer
 import com.personal.watermarkcamera.R
 import com.personal.watermarkcamera.data.DeleteOutcome
+import com.personal.watermarkcamera.data.EditTarget
 import com.personal.watermarkcamera.data.PhotoItem
 import com.personal.watermarkcamera.data.PhotoRepository
 import kotlinx.coroutines.Dispatchers
@@ -110,8 +112,8 @@ fun GalleryScreen(container: AppContainer) {
     var pendingConsent by remember { mutableStateOf<DeleteOutcome?>(null) }
     // 系统确认后仍删不掉的张数：非空时弹出原因 + 可执行指引
     var failedDeleteCount by remember { mutableStateOf<Int?>(null) }
-    // 重新编辑水印：非空时显示独立编辑页
-    var editingItem by remember { mutableStateOf<PhotoItem?>(null) }
+    // 重新编辑水印 / 给已有照片加水印：非空时显示独立编辑页
+    var editingTarget by remember { mutableStateOf<EditTarget?>(null) }
     // 成片被覆盖后，缩略图与大图需要重新加载
     var refreshTick by remember { mutableIntStateOf(0) }
     var sharing by remember { mutableStateOf(false) }
@@ -138,6 +140,34 @@ fun GalleryScreen(container: AppContainer) {
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
         mediaPermissionLauncher.launch(permission)
+    }
+
+    // 「给照片加水印」：走系统选图，不申请相册读取权限（Photo Picker 优先，SAF 兜底）
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            result.data?.data?.let { uri -> editingTarget = EditTarget.Picked(uri) }
+        }
+        // 取消选图：什么都不做
+    }
+
+    fun openPhotoPicker() {
+        val saf = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+        }
+        val first = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Intent(MediaStore.ACTION_PICK_IMAGES).apply { type = "image/*" }
+        } else {
+            saf
+        }
+        runCatching { photoPickerLauncher.launch(first) }.onFailure {
+            // 个别机型没有 Photo Picker，退回文档选择器
+            runCatching { photoPickerLauncher.launch(saf) }.onFailure {
+                Toast.makeText(context, "没有可用的系统选图界面", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     // 每次进入「图片」页都会重新组合，因此刚拍完切过来就能看到最新照片
@@ -288,14 +318,16 @@ fun GalleryScreen(container: AppContainer) {
 
     val list = photos
     val openIndex = viewingIndex
-    editingItem?.let { item ->
+    val editTarget = editingTarget
+    if (editTarget != null) {
         WatermarkEditScreen(
             repository = repository,
             renderer = container.renderer,
-            item = item,
-            onBack = { editingItem = null },
+            target = editTarget,
+            currentSettings = container.settingsStore.settings,
+            onBack = { editingTarget = null },
             onSaved = {
-                editingItem = null
+                editingTarget = null
                 scope.launch {
                     photos = repository.loadPhotos()
                     refreshTick++
@@ -316,7 +348,9 @@ fun GalleryScreen(container: AppContainer) {
             onToggleStrip = { container.appSettings.updateStripLocationOnShare(it) },
             onShare = { item -> shareItems(listOf(item)) },
             onClose = { viewingIndex = null },
-            onEdit = { editingItem = it },
+            onEdit = {
+                editingTarget = EditTarget.Owned(it)
+            },
             onDelete = { item -> beginDelete(listOf(item)) }
         )
         // 全屏查看时也要能看到「删不掉」的原因与操作指引
@@ -356,33 +390,44 @@ fun GalleryScreen(container: AppContainer) {
             }
 
             list.isEmpty() -> {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(horizontal = 32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "还没有照片",
-                        color = scheme.onBackground,
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "去「拍照」拍一张，就会出现在这里",
-                        color = scheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    if (!readMediaGranted) {
-                        Spacer(Modifier.height(20.dp))
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // 空的图片页也要保留「给照片加水印」入口
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(end = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AddWatermarkEntry(onClick = { openPhotoPicker() })
+                    }
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(horizontal = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
                         Text(
-                            text = "清除应用数据或重装后，旧照片需要相册读取权限才能找回",
+                            text = "还没有照片",
+                            color = scheme.onBackground,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "去「拍照」拍一张，或者给手机里的老照片加水印",
                             color = scheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall
                         )
-                        Spacer(Modifier.height(4.dp))
-                        TextButton(onClick = { requestMediaPermission() }) {
-                            Text(text = "授予权限找回旧照片", color = Accent)
+                        if (!readMediaGranted) {
+                            Spacer(Modifier.height(20.dp))
+                            Text(
+                                text = "清除应用数据或重装后，旧照片需要相册读取权限才能找回",
+                                color = scheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            TextButton(onClick = { requestMediaPermission() }) {
+                                Text(text = "授予权限找回旧照片", color = Accent)
+                            }
                         }
                     }
                 }
@@ -410,12 +455,20 @@ fun GalleryScreen(container: AppContainer) {
                             onDelete = { confirmDeleteSelected = true }
                         )
                     } else {
-                        Text(
-                            text = "共 ${list.size} 张",
-                            color = scheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 14.dp, end = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "共 ${list.size} 张",
+                                color = scheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            AddWatermarkEntry(onClick = { openPhotoPicker() })
+                        }
                     }
                     LazyVerticalGrid(
                         // 竖屏仍是 3 列；横屏按最小格宽自动增加列数，避免一屏只显示三个巨型格子
@@ -499,6 +552,24 @@ fun GalleryScreen(container: AppContainer) {
                 requestMediaPermission()
             },
             onDismiss = { failedDeleteCount = null }
+        )
+    }
+}
+
+@Composable
+private fun AddWatermarkEntry(onClick: () -> Unit) {
+    TextButton(onClick = onClick) {
+        Image(
+            painter = painterResource(R.drawable.ic_watermark),
+            contentDescription = null,
+            colorFilter = ColorFilter.tint(Accent),
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = "给照片加水印",
+            color = Accent,
+            style = MaterialTheme.typography.labelLarge
         )
     }
 }
