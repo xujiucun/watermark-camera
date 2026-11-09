@@ -85,6 +85,37 @@ $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
 adb install -r app\build\outputs\apk\debug\app-debug.apk
 ```
 
+## 发布签名
+
+release 包使用独立签名，签名材料**一律不入库**（`.gitignore` 已忽略 `*.jks` / `*.keystore` / `/keystore/` / `keystore.properties`）。
+
+| 项 | 值 |
+| --- | --- |
+| 密钥库类型 | PKCS12（`keystore/watermark-camera-release.jks`，仅保存在本机） |
+| 别名 | `watermarkcamera` |
+| 算法 | RSA 4096，SHA384withRSA |
+| 有效期 | 10000 天（约 27 年） |
+| 凭据文件 | 工程根目录 `keystore.properties`（`storeFile` / `storePassword` / `keyAlias` / `keyPassword`） |
+
+`app/build.gradle.kts` 从 `keystore.properties` 读取 `signingConfigs.release` 并赋给 release buildType；文件或密钥库缺失时会打印 warning 并回退到 debug 签名，保证新克隆的仓库也能直接 `assembleRelease` 做本地验证（该产物不可用于发布）。
+
+**必须自行备份 keystore 与密码**，并且以后每次发版都用同一签名：
+
+- 签名丢失后，已安装的用户无法覆盖升级，只能卸载重装；
+- 更换签名同样必须先卸载旧版本，而**卸载会清空应用数据**（水印设置、模板、私有原图，以及依赖私有原图的「重新编辑」能力）；
+- `versionCode` 必须严格递增。当前为 `versionCode = 2` / `versionName = 0.0.2`，**下次发版使用 `versionCode = 3`**。
+
+```powershell
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+.\gradlew.bat assembleRelease
+# 产物：app\build\outputs\apk\release\app-release.apk
+
+# 校验签名与证书指纹
+& "$env:LOCALAPPDATA\Android\Sdk\build-tools\36.0.0\apksigner.bat" verify --print-certs --verbose app\build\outputs\apk\release\app-release.apk
+```
+
+release 目前 `minifyEnabled = false`（不开 R8 / 混淆），以构建与启动稳定性优先。
+
 ## 权限说明
 
 | 权限 | 用途 |
@@ -117,6 +148,8 @@ WatermarkCamera/
 │       └── AndroidManifest.xml
 ├── gradle/                                      # wrapper 配置
 ├── build.gradle.kts / settings.gradle.kts / gradle.properties
+├── keystore.properties                          # 本地发布签名凭据（不入库）
+├── keystore/                                     # 本地 release keystore（不入库）
 ├── gradlew / gradlew.bat
 └── README.md
 ```
@@ -129,7 +162,7 @@ WatermarkCamera/
 - **覆盖写回**：重新编辑只覆盖相册里的同一条成片，不会另存新副本；原图与水印快照保留，因此可反复编辑。
 - **验证范围有限**：仅在 API 31 真机验证，API 29 / 30 及 32+ 未逐机型实测。
 - **网络依赖**：天气与地址依赖高德 Web API；断网或未配置 Key 时对应内容降级为空。
-- 仅中文界面；未做 release 签名、混淆与上架配置。
+- 仅中文界面；release 已配置独立签名但未开启 R8 / 混淆，也未做上架配置。
 
 ## 版本记录
 

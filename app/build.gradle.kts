@@ -14,6 +14,21 @@ val localProperties = Properties().apply {
 }
 val amapWebKey: String = localProperties.getProperty("AMAP_WEB_KEY", "")
 
+// 发布签名配置放工程根目录的 keystore.properties（不入库）。
+// 文件缺失时 release 回退到 debug 签名并打印提示，保证新克隆的仓库也能直接 assembleRelease。
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
+val hasReleaseSigning = keystorePropertiesFile.exists() &&
+    !keystoreProperties.getProperty("storeFile").isNullOrBlank() &&
+    rootProject.file(keystoreProperties.getProperty("storeFile")).exists()
+if (!hasReleaseSigning) {
+    logger.warn("未找到 keystore.properties 或签名文件，release 将使用 debug 签名（仅用于本地验证，不可用于发布）。")
+}
+
 android {
     namespace = "com.personal.watermarkcamera"
     compileSdk = 36
@@ -30,9 +45,26 @@ android {
         buildConfigField("String", "AMAP_WEB_KEY", "\"$amapWebKey\"")
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // 暂不开启 R8/混淆，优先保证构建与启动稳定。
             isMinifyEnabled = false
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 
