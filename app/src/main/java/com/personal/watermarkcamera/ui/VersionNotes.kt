@@ -59,6 +59,9 @@ val currentVersionNote = VersionNote(
         VersionSection(
             title = "图片页",
             items = listOf(
+                "给手机已有照片加水印：图片页右上角入口（空相册也保留），系统 Photo Picker / SAF 选图，不申请相册读取权限，复用同一套水印编辑界面",
+                "外部照片的水印时间取原图 EXIF 拍摄时间（无 EXIF 退回文件修改时间），地点优先 EXIF GPS、无 GPS 退回当前定位",
+                "保存为另存的新成片到 Pictures/WatermarkCamera，原图不覆盖、不修改",
                 "成片重新编辑水印：基于私有原图覆盖相册中的同一条成片，可反复编辑",
                 "分享单张 / 多选照片，支持「移除位置信息」开关（默认开启，剥离 EXIF GPS）",
                 "全屏查看，左右滑动切换上一张 / 下一张",
