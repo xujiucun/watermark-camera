@@ -84,6 +84,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -1045,20 +1046,34 @@ private fun ZoomControl(
                 modifier = Modifier.weight(1f)
             )
         }
-        // 当前倍率数值；点击回到 1x（范围不含 1x 时停在最近的合法值）
-        Text(
-            text = String.format(Locale.US, "%.1fx", ratio),
-            color = if (zoomable) Color.White else Color.White.copy(alpha = 0.55f),
-            style = MaterialTheme.typography.labelLarge,
-            maxLines = 1,
+        // 当前倍率数值；点击回到 1x（范围不含 1x 时停在最近的合法值）。
+        // 外层宽度按「最大倍率文本」固定（用同款文字做透明占位），否则 1.0x → 10.0x
+        // 时文字变宽会把左侧滑杆挤窄，拖动过程中轨道长度跟着变，观感像抖动。
+        Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(10.dp))
                 .background(Color(0x33000000))
                 .clickable(enabled = zoomable) {
                     onChange(1f.coerceIn(minRatio, maxRatio))
                 }
-                .padding(horizontal = 8.dp, vertical = 4.dp)
-        )
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            // 透明占位：只参与测量，不显示也不读屏
+            Text(
+                text = String.format(Locale.US, "%.1fx", maxRatio),
+                color = Color.Transparent,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                modifier = Modifier.clearAndSetSemantics { }
+            )
+            Text(
+                text = String.format(Locale.US, "%.1fx", ratio),
+                color = if (zoomable) Color.White else Color.White.copy(alpha = 0.55f),
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1
+            )
+        }
     }
 }
 
