@@ -97,7 +97,11 @@ fun WatermarkEditPanel(
     /** 图片页「重新编辑水印」复用本面板时不展示模板快捷区（模板属于拍摄侧全局设置）。 */
     showPresets: Boolean = true,
     /** 高度上限：横屏整体高度很小，由调用方按可用高度收紧，底部弹窗仍保持头部固定 + 内容滚动。 */
-    maxHeight: Dp = 520.dp
+    maxHeight: Dp = 520.dp,
+    /** 头部标题；模板编辑页复用本面板时换成「模板参数」。 */
+    title: String = "水印设置",
+    /** 模板编辑页把保存放在顶栏，可隐藏这里的「完成」。 */
+    showDone: Boolean = true
 ) {
     val scheme = MaterialTheme.colorScheme
     val titleStyle = MaterialTheme.typography.titleMedium
@@ -120,7 +124,7 @@ fun WatermarkEditPanel(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "水印设置",
+                text = title,
                 color = scheme.onSurface,
                 style = titleStyle,
                 fontWeight = FontWeight.SemiBold,
@@ -128,13 +132,15 @@ fun WatermarkEditPanel(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
-            TextButton(onClick = onDone) {
-                Text(
-                    text = "完成",
-                    color = Accent,
-                    style = titleStyle,
-                    fontWeight = FontWeight.Medium
-                )
+            if (showDone) {
+                TextButton(onClick = onDone) {
+                    Text(
+                        text = "完成",
+                        color = Accent,
+                        style = titleStyle,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
         }
         HorizontalDivider(thickness = 0.5.dp, color = scheme.outlineVariant)

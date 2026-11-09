@@ -52,8 +52,9 @@ private val Accent = Color(0xFFFF6B35)
 
 /**
  * 「我的模板」独立页面：
- * 列表（名称 + 样式 + 可见项摘要）、新建（保存当前设置）、套用、改名、删除（二次确认）、
- * 用当前设置覆盖某个模板。模板数据由 [AppContainer.presetStore] 持久化，重启后仍在。
+ * 列表（名称 + 样式 + 可见项摘要）、新建/编辑（独立编辑页，不污染当前设置）、套用、
+ * 用当前设置覆盖某个模板、改名、删除（二次确认）。
+ * 模板数据由 [AppContainer.presetStore] 持久化，重启后仍在。
  */
 @Composable
 fun TemplateScreen(container: AppContainer, darkTheme: Boolean, onBack: () -> Unit) {
@@ -62,11 +63,32 @@ fun TemplateScreen(container: AppContainer, darkTheme: Boolean, onBack: () -> Un
     val presets = container.presetStore.presets
     val current = container.settingsStore.settings
 
-    var createOpen by remember { mutableStateOf(false) }
+    var editorNew by remember { mutableStateOf(false) }
+    var editorId by remember { mutableStateOf<String?>(null) }
     var renameTarget by remember { mutableStateOf<WatermarkPreset?>(null) }
     var deleteTarget by remember { mutableStateOf<WatermarkPreset?>(null) }
     var updateTarget by remember { mutableStateOf<WatermarkPreset?>(null) }
     var appliedId by remember { mutableStateOf<String?>(null) }
+
+    // 新建/编辑走独立页面：草稿状态在那里，当前拍摄设置不受影响
+    if (editorNew || editorId != null) {
+        TemplateEditScreen(
+            container = container,
+            darkTheme = darkTheme,
+            presetId = if (editorNew) null else editorId,
+            onDone = {
+                if (editorId == appliedId) appliedId = null
+                editorNew = false
+                editorId = null
+            },
+            onDeleted = { id ->
+                if (appliedId == id) appliedId = null
+                editorNew = false
+                editorId = null
+            }
+        )
+        return
+    }
 
     BackHandler(onBack = onBack)
     StatusBarStyle(lightIcons = !darkTheme, color = scheme.background)
@@ -96,7 +118,7 @@ fun TemplateScreen(container: AppContainer, darkTheme: Boolean, onBack: () -> Un
                 modifier = Modifier.align(Alignment.Center)
             )
             TextButton(
-                onClick = { createOpen = true },
+                onClick = { editorNew = true },
                 modifier = Modifier.align(Alignment.CenterEnd)
             ) {
                 androidx.compose.foundation.Image(
@@ -111,7 +133,8 @@ fun TemplateScreen(container: AppContainer, darkTheme: Boolean, onBack: () -> Un
         }
 
         Text(
-            text = "模板保存当时的全部水印设置（含位置），点「套用」即可整体还原；「更新」会用当前设置覆盖该模板。",
+            text = "模板保存完整的样式、显示项、字号、颜色与位置；新建和编辑都在独立页面完成，" +
+                "只有点「套用」才会写入当前拍摄水印。",
             color = scheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
@@ -132,13 +155,13 @@ fun TemplateScreen(container: AppContainer, darkTheme: Boolean, onBack: () -> Un
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "把当前的样式、显示项、字号、颜色与位置存成模板，以后一键切回。",
+                    text = "点「新建」进入独立编辑页，设置样式、显示项、字号、颜色与位置后保存。",
                     color = scheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(Modifier.height(14.dp))
-                TextButton(onClick = { createOpen = true }) {
-                    Text("从当前设置新建模板", color = Accent)
+                TextButton(onClick = { editorNew = true }) {
+                    Text("新建模板", color = Accent)
                 }
             }
         } else {
@@ -158,6 +181,7 @@ fun TemplateScreen(container: AppContainer, darkTheme: Boolean, onBack: () -> Un
                                 .show()
                         },
                         onUpdate = { updateTarget = preset },
+                        onEdit = { editorId = preset.id },
                         onRename = { renameTarget = preset },
                         onDelete = { deleteTarget = preset }
                     )
@@ -165,21 +189,6 @@ fun TemplateScreen(container: AppContainer, darkTheme: Boolean, onBack: () -> Un
                 item { Spacer(Modifier.height(16.dp)) }
             }
         }
-    }
-
-    if (createOpen) {
-        NameDialog(
-            title = "新建模板",
-            initialName = container.presetStore.defaultName(),
-            confirmLabel = "保存",
-            onDismiss = { createOpen = false },
-            onConfirm = { name ->
-                createOpen = false
-                val saved = container.presetStore.saveNew(name, current)
-                appliedId = saved.id
-                Toast.makeText(context, "已保存为「${saved.name}」", Toast.LENGTH_SHORT).show()
-            }
-        )
     }
 
     renameTarget?.let { target ->
@@ -237,12 +246,14 @@ fun TemplateScreen(container: AppContainer, darkTheme: Boolean, onBack: () -> Un
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun PresetCard(
     preset: WatermarkPreset,
     applied: Boolean,
     onApply: () -> Unit,
     onUpdate: () -> Unit,
+    onEdit: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -288,9 +299,17 @@ private fun PresetCard(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(end = 8.dp)
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // 大字号下操作行可换行，避免「编辑」等按钮被挤出卡片
+        androidx.compose.foundation.layout.FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.Center
+        ) {
             TextButton(onClick = onApply) {
                 Text("套用", color = Accent, style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(onClick = onEdit) {
+                Text("编辑", color = Accent, style = MaterialTheme.typography.bodySmall)
             }
             TextButton(onClick = onUpdate) {
                 Text("更新", color = scheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
@@ -298,7 +317,6 @@ private fun PresetCard(
             TextButton(onClick = onRename) {
                 Text("改名", color = scheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
-            Spacer(Modifier.weight(1f))
             Box(
                 modifier = Modifier
                     .size(40.dp)
