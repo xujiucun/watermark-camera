@@ -898,6 +898,13 @@ private fun CameraContent(container: AppContainer, onOpenTemplates: () -> Unit) 
                     sheetOpen = false
                     onOpenTemplates()
                 },
+                // 把当前设置的完整快照存成模板；不改当前拍摄水印
+                onSaveAsTemplate = { name ->
+                    val saved = container.presetStore.saveNew(name, settings)
+                    activePresetId = saved.id
+                    Toast.makeText(context, "已保存为模板：${saved.name}", Toast.LENGTH_SHORT).show()
+                },
+                defaultTemplateName = container.presetStore.defaultName(),
                 onOpenLocationSettings = { openLocationSettings() },
                 onDone = { sheetOpen = false },
                 maxHeight = 520.dp,

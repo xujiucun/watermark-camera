@@ -23,8 +23,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -192,7 +190,7 @@ fun TemplateScreen(container: AppContainer, darkTheme: Boolean, onBack: () -> Un
     }
 
     renameTarget?.let { target ->
-        NameDialog(
+        TemplateNameDialog(
             title = "重命名模板",
             initialName = target.name,
             confirmLabel = "保存",
@@ -351,45 +349,4 @@ private fun presetSummary(settings: WatermarkSettings): String {
         ""
     }
     return "${settings.template.label} · $items$custom"
-}
-
-@Composable
-private fun NameDialog(
-    title: String,
-    initialName: String,
-    confirmLabel: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    var name by remember { mutableStateOf(initialName) }
-    val scheme = MaterialTheme.colorScheme
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it.take(24) },
-                singleLine = true,
-                label = { Text("模板名称") },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Accent,
-                    unfocusedBorderColor = scheme.outlineVariant,
-                    focusedLabelColor = Accent,
-                    unfocusedLabelColor = scheme.onSurfaceVariant,
-                    cursorColor = Accent
-                ),
-                modifier = Modifier.fillMaxWidth()
-            )
-        },
-        confirmButton = {
-            TextButton(
-                enabled = name.isNotBlank(),
-                onClick = { onConfirm(name.trim().ifBlank { initialName }) }
-            ) { Text(confirmLabel, color = if (name.isNotBlank()) Accent else scheme.onSurfaceVariant) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        }
-    )
 }

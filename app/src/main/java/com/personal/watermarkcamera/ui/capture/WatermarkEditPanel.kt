@@ -33,6 +33,10 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,6 +52,7 @@ import com.personal.watermarkcamera.domain.LocationDetail
 import com.personal.watermarkcamera.domain.WatermarkPreset
 import com.personal.watermarkcamera.domain.WatermarkSettings
 import com.personal.watermarkcamera.domain.WatermarkTemplate
+import com.personal.watermarkcamera.ui.template.TemplateNameDialog
 
 private val Accent = Color(0xFFFF6B35)
 
@@ -75,7 +80,8 @@ private val BACKDROP_COLORS = listOf(
  *
  * 改动通过 [onChange] 立即回写设置，预览由同一份设置实时重绘。
  * 「我的模板」的完整管理（新建 / 改名 / 删除 / 更新）在独立页面
- * [com.personal.watermarkcamera.ui.template.TemplateScreen]，这里只保留快速套用入口。
+ * [com.personal.watermarkcamera.ui.template.TemplateScreen]；这里保留快速套用，
+ * 以及「把当前设置存为模板」的快捷入口（仅在 showPresets 为 true 的拍摄页出现）。
  *
  * 字号全部基于 MaterialTheme.typography 的 sp 值，因此会随「App 界面字号」整体缩放；
  * 不受「水印字号」影响。分区标题与行文案都可换行/省略，大字号下不会被截断。
@@ -91,6 +97,10 @@ fun WatermarkEditPanel(
     onChange: (WatermarkSettings) -> Unit,
     onApplyPreset: (WatermarkPreset) -> Unit,
     onManageTemplates: () -> Unit,
+    /** 非空时在「快速套用」区显示「存为模板」：由调用方把当前设置快照写进模板库并提示。 */
+    onSaveAsTemplate: ((String) -> Unit)? = null,
+    /** 「存为模板」命名对话框的默认名称。 */
+    defaultTemplateName: String = "",
     onOpenLocationSettings: () -> Unit,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
@@ -103,6 +113,7 @@ fun WatermarkEditPanel(
     /** 模板编辑页把保存放在顶栏，可隐藏这里的「完成」。 */
     showDone: Boolean = true
 ) {
+    var saveTemplateDialog by remember { mutableStateOf(false) }
     val scheme = MaterialTheme.colorScheme
     val titleStyle = MaterialTheme.typography.titleMedium
     val rowStyle = MaterialTheme.typography.bodyLarge
@@ -319,9 +330,22 @@ fun WatermarkEditPanel(
                         }
                     }
                 )
+                // 与模板页「独立新建」并存：这里把当前设置的完整快照直接存成模板（不改当前设置）
+                if (onSaveAsTemplate != null) {
+                    TextButton(onClick = { saveTemplateDialog = true }) {
+                        Image(
+                            painter = painterResource(R.drawable.ic_template),
+                            contentDescription = null,
+                            colorFilter = ColorFilter.tint(Accent),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("存为模板", color = Accent, style = labelStyle)
+                    }
+                }
                 if (presets.isEmpty()) {
                     Text(
-                        text = "还没有自定义模板。可在「管理模板」里把当前设置存成模板。",
+                        text = "还没有自定义模板。点「存为模板」保存当前设置，或去「管理模板」独立新建。",
                         color = scheme.onSurfaceVariant,
                         style = hintStyle
                     )
@@ -350,6 +374,20 @@ fun WatermarkEditPanel(
                 style = hintStyle
             )
         }
+    }
+
+    // 「存为模板」命名：确认后由调用方用当前设置的完整快照写库，本面板不直接改设置
+    if (saveTemplateDialog && onSaveAsTemplate != null) {
+        TemplateNameDialog(
+            title = "存为模板",
+            initialName = defaultTemplateName,
+            confirmLabel = "保存",
+            onDismiss = { saveTemplateDialog = false },
+            onConfirm = { name ->
+                saveTemplateDialog = false
+                onSaveAsTemplate(name)
+            }
+        )
     }
 }
 
