@@ -1,8 +1,15 @@
 package com.personal.watermarkcamera.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -32,18 +39,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.personal.watermarkcamera.AppContainer
 import com.personal.watermarkcamera.BuildConfig
+import com.personal.watermarkcamera.R
 import com.personal.watermarkcamera.data.ThemeMode
 import com.personal.watermarkcamera.data.UiFontScale
 import com.personal.watermarkcamera.domain.WatermarkSettings
 import java.util.Locale
 
+/** 项目主页地址：只在点击时交给系统浏览器打开，不联网、不内嵌 WebView。 */
+private const val PROJECT_URL = "https://github.com/xujiucun/watermark-camera"
+
 /**
- * 设置页：界面字号 / 水印字号（两套互不影响）+ 主题 + 我的模板入口 + 恢复默认水印设置 + 版本说明入口。
+ * 设置页：界面字号 / 水印字号（两套互不影响）+ 主题 + 我的模板入口 + 恢复默认水印设置 + 关于（版本说明入口）。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SettingsScreen(
     container: AppContainer,
@@ -187,6 +200,36 @@ fun SettingsScreen(
         }
 
         Section(title = "关于") {
+            InfoRow(label = "应用名", value = stringResource(R.string.app_name))
+            InfoRow(label = "版本", value = "v${BuildConfig.VERSION_NAME}")
+            InfoRow(label = "发布日期", value = currentVersionNote.date)
+
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "项目地址",
+                    color = scheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    text = PROJECT_URL,
+                    color = scheme.primary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .combinedClickable(
+                            onClick = { openProjectPage(context) },
+                            onLongClick = {
+                                val clipboard = context.getSystemService(ClipboardManager::class.java)
+                                clipboard?.setPrimaryClip(
+                                    ClipData.newPlainText("项目地址", PROJECT_URL)
+                                )
+                                Toast.makeText(context, "已复制项目地址", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                        .padding(vertical = 4.dp)
+                )
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -258,4 +301,32 @@ private fun Section(title: String, content: @Composable () -> Unit) {
         )
         content()
     }
+}
+
+/** 关于区的一行「标签 + 值」；标签让出空间，长值自然换行，不会与标签重叠。 */
+@Composable
+private fun InfoRow(label: String, value: String) {
+    val scheme = MaterialTheme.colorScheme
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = label,
+            color = scheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = value,
+            color = scheme.onSurface,
+            style = MaterialTheme.typography.bodyMedium
+        )
+    }
+}
+
+/** 交给系统浏览器打开项目主页；无可用浏览器时提示，不崩溃。 */
+private fun openProjectPage(context: Context) {
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(PROJECT_URL))
+    runCatching { context.startActivity(intent) }
+        .onFailure {
+            Toast.makeText(context, "没有可用的浏览器", Toast.LENGTH_SHORT).show()
+        }
 }
